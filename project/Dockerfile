@@ -39,6 +39,9 @@ WORKDIR /app
 # Copy backend from backend image
 COPY --from=backend /app /app
 
+# Install Python dependencies in final stage
+RUN pip install --no-cache-dir -r requirements.txt
+
 # Copy frontend build from frontend image
 COPY --from=frontend /frontend/dist /app/dist
 
