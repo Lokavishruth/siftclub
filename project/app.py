@@ -15,6 +15,8 @@ client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 app = Flask(__name__, static_folder="dist", static_url_path="/")
 CORS(app)
+# Allow up to 32MB uploads (increase if needed)
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
 
 @app.route('/chat', methods=['POST'])
 def chat():
