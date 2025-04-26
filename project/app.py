@@ -7,6 +7,7 @@ import requests
 import re
 from werkzeug.utils import secure_filename
 import tempfile
+from openai import APIConnectionError
 
 load_dotenv()
 
@@ -131,14 +132,16 @@ def scan_photo():
     user_profile = None
     barcode = None
     ingredients = None
+    product_name = ''
+    brands = ''
+    code = ''
+    ingredients_text = ''
+    openai_response = ''
 
-    # Barcode parser: extract barcode from possible fields or text
     def extract_barcode(value):
         import re
-        # Accepts barcodes as numbers, or as part of a URL (e.g. Open Food Facts)
         if not value:
             return None
-        # Try to find a sequence of 8-14 digits (common barcode lengths)
         m = re.search(r'(\d{8,14})', value)
         if m:
             return m.group(1)
@@ -148,11 +151,13 @@ def scan_photo():
         user_profile = request.form['profile']
     photo_file = request.files.get('photo')
 
+    # Try to get barcode from form
     if 'barcode' in request.form:
         barcode = extract_barcode(request.form['barcode'])
         if not barcode:
             return jsonify({'error': 'No valid barcode provided.'}), 400
 
+    # If barcode found (either from form or extracted from image)
     if barcode:
         product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
         logging.info(f'Fetching product info from: {product_url}')
@@ -160,119 +165,67 @@ def scan_photo():
             resp = requests.get(product_url, timeout=7)
             logging.info(f'Open Food Facts response status: {resp.status_code}')
             resp.raise_for_status()
-
             data = resp.json()
             logging.info("Successfully parsed Open Food Facts JSON response.")
-
             if data.get('status') != 1 or 'product' not in data:
                 logging.warning('Product not found or invalid response from Open Food Facts')
                 return jsonify({'error': 'Product not found in Open Food Facts database.'}), 404
-
             product = data['product']
-            ingredients = product.get('ingredients_text', '')
+            product_name = product.get('product_name', '')
+            brands = product.get('brands', '')
+            code = product.get('code', barcode)
+            ingredients_text = product.get('ingredients_text', '')
+            ingredients = ingredients_text
             if not ingredients:
                 logging.warning('No ingredients found for product')
                 return jsonify({'error': 'No ingredients listed for this product.'}), 404
             logging.info("Successfully extracted ingredients from Open Food Facts.")
-
-        except requests.exceptions.Timeout:
-            logging.error(f'Timeout fetching Open Food Facts for barcode {barcode}')
-            return jsonify({'error': 'Timeout contacting Open Food Facts.'}), 504
-        except requests.exceptions.HTTPError as e:
-            logging.error(f'HTTP error fetching Open Food Facts for barcode {barcode}: {e}')
-            if e.response.status_code == 404:
-                return jsonify({'error': 'Product not found in Open Food Facts database.'}), 404
-            else:
-                return jsonify({'error': f'Error contacting Open Food Facts: Status {e.response.status_code}'}), 502
-        except requests.exceptions.RequestException as e:
-            logging.error(f'Network error fetching Open Food Facts for barcode {barcode}: {e}')
-            logging.error(traceback.format_exc())
-            return jsonify({'error': f'Network error contacting Open Food Facts: {str(e)}'}), 502
-        except ValueError as e:
-            logging.error(f'JSON decode error for Open Food Facts barcode {barcode}: {e}')
-            logging.error(traceback.format_exc())
-            return jsonify({'error': 'Invalid response received from Open Food Facts.'}), 502
-        except KeyError as e:
-            logging.error(f'Missing key in Open Food Facts response for barcode {barcode}: {e}')
-            logging.error(traceback.format_exc())
-            return jsonify({'error': 'Unexpected data format from Open Food Facts.'}), 500
         except Exception as e:
-            logging.error(f'Unexpected error fetching/processing Open Food Facts for barcode {barcode}: {e}')
-            logging.error(traceback.format_exc())
-            return jsonify({'error': 'An unexpected error occurred while fetching product info.'}), 500
-
+            logging.error(f'Error fetching product info: {e}')
+            return jsonify({'error': 'Error fetching product info.'}), 500
     elif photo_file:
+        # If no barcode provided, try to extract barcode from image
         logging.info('Using provided photo file.')
         filename = secure_filename(photo_file.filename or 'upload.bin')
         fd, tmp_path = tempfile.mkstemp()
         try:
             photo_file.save(tmp_path)
             logging.info(f'Photo saved temporarily to: {tmp_path}')
-
             scan_api_url = 'https://api.scanifly.com/barcode/scan'
             logging.info(f'Sending photo to barcode scanning API: {scan_api_url}')
             with open(tmp_path, 'rb') as f:
                 files = {'photo': (filename, f, photo_file.mimetype)}
-                try:
-                    resp = requests.post(scan_api_url, files=files, timeout=15)
-                    logging.info(f'Barcode scanning API response status: {resp.status_code}')
-                    resp.raise_for_status()
-
-                    scan_data = resp.json()
-                    logging.info("Successfully parsed barcode scanning API JSON response.")
-
-                    barcode = scan_data.get('barcode')
-                    if not barcode:
-                        logging.warning('Barcode not detected in image by external API')
-                        return jsonify({'error': 'Barcode not detected in the provided image.'}), 400
-
-                    logging.info(f'Barcode detected by API: {barcode}')
-
-                    product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
-                    logging.info(f'Fetching product info from: {product_url}')
-
-                    resp2 = requests.get(product_url, timeout=10)
-                    logging.info(f'Open Food Facts response status: {resp2.status_code}')
-                    resp2.raise_for_status()
-
-                    data = resp2.json()
-                    logging.info("Successfully parsed Open Food Facts JSON response.")
-
-                    if data.get('status') != 1 or 'product' not in data:
-                        logging.warning('Product not found or invalid response from Open Food Facts')
-                        return jsonify({'error': 'Product not found in Open Food Facts database.'}), 404
-
-                    product = data['product']
-                    ingredients = product.get('ingredients_text', '')
-                    if not ingredients:
-                        logging.warning('No ingredients found for product')
-                        return jsonify({'error': 'No ingredients listed for this product.'}), 404
-                    logging.info("Successfully extracted ingredients from Open Food Facts.")
-
-                except requests.exceptions.Timeout:
-                    logging.error('Timeout contacting external API (Scanifly or Open Food Facts)')
-                    return jsonify({'error': 'Timeout contacting external services.'}), 504
-                except requests.exceptions.HTTPError as e:
-                    logging.error(f'HTTP error contacting external API: {e}')
-                    if e.response.status_code == 400:
-                        return jsonify({'error': 'Error scanning barcode from image (API returned 400).'}), 400
-                    return jsonify({'error': f'Error contacting external services: Status {e.response.status_code}'}), 502
-                except requests.exceptions.RequestException as e:
-                    logging.error(f'Network error contacting external API: {e}')
-                    logging.error(traceback.format_exc())
-                    return jsonify({'error': f'Network error contacting external services: {str(e)}'}), 502
-                except ValueError as e:
-                    logging.error(f'JSON decode error from external API: {e}')
-                    logging.error(traceback.format_exc())
-                    return jsonify({'error': 'Invalid response received from external services.'}), 502
-                except KeyError as e:
-                    logging.error(f'Missing key in external API response: {e}')
-                    logging.error(traceback.format_exc())
-                    return jsonify({'error': 'Unexpected data format from external services.'}), 500
-                except Exception as e:
-                    logging.error(f'Unexpected error during photo processing or API calls: {e}')
-                    logging.error(traceback.format_exc())
-                    return jsonify({'error': 'An unexpected error occurred while processing the photo.'}), 500
+                resp = requests.post(scan_api_url, files=files, timeout=15)
+                logging.info(f'Barcode scanning API response status: {resp.status_code}')
+                resp.raise_for_status()
+                scan_data = resp.json()
+                logging.info("Successfully parsed barcode scanning API JSON response.")
+                barcode = scan_data.get('barcode')
+                if not barcode:
+                    logging.warning('Barcode not detected in image by external API')
+                    return jsonify({'error': 'Barcode not detected in the provided image.'}), 404
+                # Now fetch product info from Open Food Facts
+                product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
+                logging.info(f'Fetching product info from: {product_url}')
+                resp = requests.get(product_url, timeout=7)
+                logging.info(f'Open Food Facts response status: {resp.status_code}')
+                resp.raise_for_status()
+                data = resp.json()
+                if data.get('status') != 1 or 'product' not in data:
+                    logging.warning('Product not found or invalid response from Open Food Facts')
+                    return jsonify({'error': 'Product not found in Open Food Facts database.'}), 404
+                product = data['product']
+                product_name = product.get('product_name', '')
+                brands = product.get('brands', '')
+                code = product.get('code', barcode)
+                ingredients_text = product.get('ingredients_text', '')
+                ingredients = ingredients_text
+                if not ingredients:
+                    logging.warning('No ingredients found for product')
+                    return jsonify({'error': 'No ingredients listed for this product.'}), 404
+        except Exception as e:
+            logging.error(f'Error processing photo/barcode: {e}')
+            return jsonify({'error': 'Error processing photo/barcode.'}), 500
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 try:
@@ -280,12 +233,11 @@ def scan_photo():
                     logging.info(f'Deleted temporary file: {tmp_path}')
                 except Exception as e_unlink:
                     logging.error(f'Error deleting temporary file {tmp_path}: {e_unlink}')
-
     else:
         logging.error('No barcode or photo provided in request.')
         return jsonify({'error': 'No barcode or photo provided.'}), 400
 
-    # At this point, we have ingredients
+    # At this point, we have ingredients and product info. Run OpenAI analysis with unified prompt.
     try:
         profile_str = ''
         if user_profile:
@@ -306,10 +258,16 @@ def scan_photo():
             max_tokens=512,
             temperature=0.7
         )
-        answer = response.choices[0].message.content.strip()
+        openai_response = response.choices[0].message.content.strip()
         logging.info('Returning AI response')
-        return jsonify({'barcode': barcode, 'ingredients': ingredients, 'openai_response': answer})
-    except openai.error.APIConnectionError as e:
+        return jsonify({
+            'product_name': product_name,
+            'brands': brands,
+            'code': code,
+            'ingredients_text': ingredients_text,
+            'openai_response': openai_response
+        })
+    except APIConnectionError as e:
         logging.error(f'OpenAI API connection error: {e}')
         return jsonify({'error': 'Could not connect to OpenAI API. Please try again later.'}), 503
     except Exception as e:
