@@ -73,7 +73,7 @@ const PhotoScanAISection: React.FC = () => {
     setError('');
     setResult(null);
     try {
-      const res = await fetch('http://localhost:5000/scan_url', {
+      const res = await fetch('/scan_url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -138,7 +138,7 @@ const PhotoScanAISection: React.FC = () => {
     formData.append('photo', photo);
     formData.append('profile', JSON.stringify(userProfile));
     try {
-      const res = await fetch('http://localhost:5000/scan_photo', {
+      const res = await fetch('/scan_photo', {
         method: 'POST',
         body: formData,
       });

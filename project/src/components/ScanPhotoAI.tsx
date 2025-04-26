@@ -26,7 +26,7 @@ const ScanPhotoAI: React.FC = () => {
     const formData = new FormData();
     formData.append('photo', photo);
     try {
-      const res = await fetch('http://localhost:5000/scan_photo', {
+      const res = await fetch('/scan_photo', {
         method: 'POST',
         body: formData,
       });
