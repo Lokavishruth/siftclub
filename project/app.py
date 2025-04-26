@@ -260,38 +260,35 @@ def scan_photo():
 
     else:
         logging.error('No barcode or photo provided in request.')
-            return jsonify({'error': 'No barcode or photo provided.'}), 400
+        return jsonify({'error': 'No barcode or photo provided.'}), 400
 
-        # At this point, we have ingredients
-        try:
-            profile_str = ''
-            if user_profile:
-                profile_str = f"The user has the following health profile, allergies, dietary preferences, and ailments: {user_profile}. "
-            prompt = (
-                profile_str +
-                "Given the following list of food ingredients, generate a JSON object with the following fields:\n"
-                "1. 'ingredient_risks': an array where each object contains: 'ingredient', 'risk' (one of: 'safe', 'moderate', 'avoid'), and a brief 'reason'.\n"
-                "2. 'healthy_alternatives': an array of 3-5 healthy alternative suggestions (not brands or products), each as an object with 'suggestion' and 'reason' fields. For example: { 'suggestion': 'fresh fruit', 'reason': 'Naturally sweet and high in fiber' }.\n"
-                "3. 'ailment_explanations': an array where each object contains: 'ailment' (from the user's profile) and 'why_bad' (explain why this product or its ingredients may be problematic for that ailment).\n"
-                f"Ingredients: {ingredients}\n"
-                "Respond ONLY with the JSON object."
-            )
-            logging.info('Sending prompt to OpenAI')
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=512,
-                temperature=0.7
-            )
-            answer = response.choices[0].message.content.strip()
-            logging.info('Returning AI response')
-            return jsonify({'barcode': barcode, 'ingredients': ingredients, 'openai_response': answer})
-        except Exception as e:
-            logging.error(f'Error in OpenAI call: {e}')
-            logging.error(traceback.format_exc())
-            return jsonify({'error': str(e)}), 500
+    # At this point, we have ingredients
+    try:
+        profile_str = ''
+        if user_profile:
+            profile_str = f"The user has the following health profile, allergies, dietary preferences, and ailments: {user_profile}. "
+        prompt = (
+            profile_str +
+            "Given the following list of food ingredients, generate a JSON object with the following fields:\n"
+            "1. 'ingredient_risks': an array where each object contains: 'ingredient', 'risk' (one of: 'safe', 'moderate', 'avoid'), and a brief 'reason'.\n"
+            "2. 'healthy_alternatives': an array of 3-5 healthy alternative suggestions (not brands or products), each as an object with 'suggestion' and 'reason' fields. For example: { 'suggestion': 'fresh fruit', 'reason': 'Naturally sweet and high in fiber' }.\n"
+            "3. 'ailment_explanations': an array where each object contains: 'ailment' (from the user's profile) and 'why_bad' (explain why this product or its ingredients may be problematic for that ailment).\n"
+            f"Ingredients: {ingredients}\n"
+            "Respond ONLY with the JSON object."
+        )
+        logging.info('Sending prompt to OpenAI')
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=512,
+            temperature=0.7
+        )
+        answer = response.choices[0].message.content.strip()
+        logging.info('Returning AI response')
+        return jsonify({'barcode': barcode, 'ingredients': ingredients, 'openai_response': answer})
     except Exception as e:
-        print(f'Error in OpenAI call: {e}')
+        logging.error(f'Error in OpenAI call: {e}')
+        logging.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 @app.route("/")
