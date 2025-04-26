@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import Quagga from 'quagga';
 
 const PhotoScanAISection: React.FC = () => {
-  const [photo, setPhoto] = useState<File | null>(null);
   const [result, setResult] = useState<null | { barcode: string; ingredients: string; openai_response: string }>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -29,7 +28,6 @@ const PhotoScanAISection: React.FC = () => {
     setScanning(true);
     setResult(null);
     setError('');
-    setPhoto(null);
     setTimeout(() => {
       Quagga.init({
         inputStream: {
@@ -115,67 +113,6 @@ const PhotoScanAISection: React.FC = () => {
     setLoading(false);
   };
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setPhoto(e.target.files[0]);
-      setResult(null);
-      setError('');
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    const userProfile = getUserProfile();
-    e.preventDefault();
-    if (!photo) {
-      setError('Please select a photo.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    setResult(null);
-    const formData = new FormData();
-    formData.append('photo', photo);
-    formData.append('profile', JSON.stringify(userProfile));
-    try {
-      const res = await fetch('/scan_photo', {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
-      if (data.error) {
-        setError(data.error);
-      } else {
-        // Robust JSON extraction from AI response
-        let report = null;
-        try {
-          // Try direct parse first
-          report = JSON.parse(data.openai_response);
-        } catch {
-          // Try to extract JSON object from text/code block
-          const match = data.openai_response.match(/\{[\s\S]*\}/);
-          if (match) {
-            try {
-              report = JSON.parse(match[0]);
-            } catch {
-              setError('Failed to parse AI report.');
-              setLoading(false);
-              return;
-            }
-          } else {
-            setError('Failed to parse AI report.');
-            setLoading(false);
-            return;
-          }
-        }
-        // Also pass user profile for display
-        navigate('/ingredient-report', { state: { report, userProfile } });
-      }
-    } catch (err) {
-      setError('Failed to connect to backend.');
-    }
-    setLoading(false);
-  };
-
   return (
     <div className="mb-4">
       {/* Barcode Scanner Button and Modal */}
@@ -202,24 +139,6 @@ const PhotoScanAISection: React.FC = () => {
           </div>
         </div>
       )}
-      <form onSubmit={handleSubmit}>
-        <div className="border-2 border-dashed border-gray-300 rounded-md p-6 text-center">
-          <input
-            type="file"
-            accept="image/*"
-            onChange={handlePhotoChange}
-            className="mb-2 mx-auto"
-            style={{ display: 'block' }}
-          />
-          <button
-            type="submit"
-            className="bg-[#319795] text-white px-4 py-2 rounded font-semibold hover:bg-[#24706e]"
-            disabled={loading}
-          >
-            {loading ? 'Analyzing...' : 'Analyze Ingredients'}
-          </button>
-        </div>
-      </form>
       {error && <div className="text-red-600 mt-2 text-center">{error}</div>}
       {/* Results are now shown in a dedicated report page */}
     </div>
