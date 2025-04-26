@@ -122,54 +122,63 @@ def scan_photo():
         return None
 
     if 'profile' in request.form:
+        user_profile = request.form['profile']
+    photo_file = request.files.get('photo')
+
+    if 'barcode' in request.form:
+        barcode = extract_barcode(request.form['barcode'])
+        if not barcode:
+            return jsonify({'error': 'No valid barcode provided.'}), 400
+
+    if barcode:
         product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
         logging.info(f'Fetching product info from: {product_url}')
         try:
-                resp = requests.get(product_url, timeout=7)
-                logging.info(f'Open Food Facts response status: {resp.status_code}')
-                resp.raise_for_status()
+            resp = requests.get(product_url, timeout=7)
+            logging.info(f'Open Food Facts response status: {resp.status_code}')
+            resp.raise_for_status()
 
-                data = resp.json()
-                logging.info("Successfully parsed Open Food Facts JSON response.")
+            data = resp.json()
+            logging.info("Successfully parsed Open Food Facts JSON response.")
 
-                if data.get('status') != 1 or 'product' not in data:
-                    logging.warning('Product not found or invalid response from Open Food Facts')
-                    return jsonify({'error': 'Product not found in Open Food Facts database.'}), 404
+            if data.get('status') != 1 or 'product' not in data:
+                logging.warning('Product not found or invalid response from Open Food Facts')
+                return jsonify({'error': 'Product not found in Open Food Facts database.'}), 404
 
-                product = data['product']
-                ingredients = product.get('ingredients_text', '')
-                if not ingredients:
-                    logging.warning('No ingredients found for product')
-                    return jsonify({'error': 'No ingredients listed for this product.'}), 404
-                logging.info("Successfully extracted ingredients from Open Food Facts.")
+            product = data['product']
+            ingredients = product.get('ingredients_text', '')
+            if not ingredients:
+                logging.warning('No ingredients found for product')
+                return jsonify({'error': 'No ingredients listed for this product.'}), 404
+            logging.info("Successfully extracted ingredients from Open Food Facts.")
 
-            except requests.exceptions.Timeout:
-                logging.error(f'Timeout fetching Open Food Facts for barcode {barcode}')
-                return jsonify({'error': 'Timeout contacting Open Food Facts.'}), 504
-            except requests.exceptions.HTTPError as e:
-                logging.error(f'HTTP error fetching Open Food Facts for barcode {barcode}: {e}')
-                if e.response.status_code == 404:
-                    return jsonify({'error': 'Product not found in Open Food Facts database.'}), 404
-                else:
-                    return jsonify({'error': f'Error contacting Open Food Facts: Status {e.response.status_code}'}), 502
-            except requests.exceptions.RequestException as e:
-                logging.error(f'Network error fetching Open Food Facts for barcode {barcode}: {e}')
-                logging.error(traceback.format_exc())
-                return jsonify({'error': f'Network error contacting Open Food Facts: {str(e)}'}), 502
-            except ValueError as e:
-                logging.error(f'JSON decode error for Open Food Facts barcode {barcode}: {e}')
-                logging.error(traceback.format_exc())
-                return jsonify({'error': 'Invalid response received from Open Food Facts.'}), 502
-            except KeyError as e:
-                logging.error(f'Missing key in Open Food Facts response for barcode {barcode}: {e}')
-                logging.error(traceback.format_exc())
-                return jsonify({'error': 'Unexpected data format from Open Food Facts.'}), 500
-            except Exception as e:
-                logging.error(f'Unexpected error fetching/processing Open Food Facts for barcode {barcode}: {e}')
-                logging.error(traceback.format_exc())
-                return jsonify({'error': 'An unexpected error occurred while fetching product info.'}), 500
+        except requests.exceptions.Timeout:
+            logging.error(f'Timeout fetching Open Food Facts for barcode {barcode}')
+            return jsonify({'error': 'Timeout contacting Open Food Facts.'}), 504
+        except requests.exceptions.HTTPError as e:
+            logging.error(f'HTTP error fetching Open Food Facts for barcode {barcode}: {e}')
+            if e.response.status_code == 404:
+                return jsonify({'error': 'Product not found in Open Food Facts database.'}), 404
+            else:
+                return jsonify({'error': f'Error contacting Open Food Facts: Status {e.response.status_code}'}), 502
+        except requests.exceptions.RequestException as e:
+            logging.error(f'Network error fetching Open Food Facts for barcode {barcode}: {e}')
+            logging.error(traceback.format_exc())
+            return jsonify({'error': f'Network error contacting Open Food Facts: {str(e)}'}), 502
+        except ValueError as e:
+            logging.error(f'JSON decode error for Open Food Facts barcode {barcode}: {e}')
+            logging.error(traceback.format_exc())
+            return jsonify({'error': 'Invalid response received from Open Food Facts.'}), 502
+        except KeyError as e:
+            logging.error(f'Missing key in Open Food Facts response for barcode {barcode}: {e}')
+            logging.error(traceback.format_exc())
+            return jsonify({'error': 'Unexpected data format from Open Food Facts.'}), 500
+        except Exception as e:
+            logging.error(f'Unexpected error fetching/processing Open Food Facts for barcode {barcode}: {e}')
+            logging.error(traceback.format_exc())
+            return jsonify({'error': 'An unexpected error occurred while fetching product info.'}), 500
 
-        elif photo_file:
+    elif photo_file:
         logging.info('Using provided photo file.')
         filename = secure_filename(photo_file.filename or 'upload.bin')
         fd, tmp_path = tempfile.mkstemp()
