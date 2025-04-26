@@ -98,6 +98,7 @@ def scan_url():
 def scan_photo():
     print('Received request to /scan_photo')
     user_profile = None
+    barcode = None
     if 'profile' in request.form:
         try:
             user_profile = request.form['profile']
@@ -105,6 +106,51 @@ def scan_photo():
         except Exception as e:
             print(f'Error parsing profile: {e}')
             user_profile = None
+    if 'barcode' in request.form:
+        barcode = request.form['barcode']
+        print(f'Barcode received directly: {barcode}')
+    if barcode:
+        # Barcode provided directly, skip photo upload
+        try:
+            product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
+            print(f'Fetching product info from: {product_url}')
+            resp2 = requests.get(product_url, timeout=7)
+            print(f'Product info response status: {resp2.status_code}')
+            data = resp2.json()
+            if data.get('status') != 1:
+                print('Product not found in Open Food Facts')
+                return jsonify({'error': 'Product not found.'}), 404
+            product = data['product']
+            ingredients = product.get('ingredients_text', '')
+            if not ingredients:
+                print('No ingredients found for product')
+                return jsonify({'error': 'No ingredients found.'}), 404
+            # Pass only ingredients to OpenAI
+            profile_str = ''
+            if user_profile:
+                profile_str = f"The user has the following health profile, allergies, dietary preferences, and ailments: {user_profile}. "
+            prompt = (
+                profile_str +
+                "Given the following list of food ingredients, generate a JSON object with the following fields:\n"
+                "1. 'ingredient_risks': an array where each object contains: 'ingredient', 'risk' (one of: 'safe', 'moderate', 'avoid'), and a brief 'reason'.\n"
+                "2. 'healthy_alternatives': an array of 3-5 healthy alternative suggestions (not brands or products), each as an object with 'suggestion' and 'reason' fields. For example: { 'suggestion': 'fresh fruit', 'reason': 'Naturally sweet and high in fiber' }.\n"
+                "3. 'ailment_explanations': an array where each object contains: 'ailment' (from the user's profile) and 'why_bad' (explain why this product or its ingredients may be problematic for that ailment).\n"
+                f"Ingredients: {ingredients}\n"
+                "Respond ONLY with the JSON object."
+            )
+            print('Sending prompt to OpenAI')
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=512,
+                temperature=0.7
+            )
+            answer = response.choices[0].message.content.strip()
+            print('Returning AI response')
+            return jsonify({'barcode': barcode, 'ingredients': ingredients, 'openai_response': answer})
+        except Exception as e:
+            print(f'Error in /scan_photo (barcode): {e}')
+            return jsonify({'error': str(e)}), 500
     if 'photo' not in request.files:
         print('No photo uploaded in request.files')
         return jsonify({'error': 'No photo uploaded.'}), 400

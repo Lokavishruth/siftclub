@@ -42,6 +42,30 @@ const ScanPhotoAI: React.FC = () => {
     setLoading(false);
   };
 
+  // Handler for barcode scan
+  const handleBarcodeDetected = async (barcode: string) => {
+    setLoading(true);
+    setError('');
+    setResult(null);
+    const formData = new FormData();
+    formData.append('barcode', barcode);
+    try {
+      const res = await fetch('/scan_photo', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.error) {
+        setError(data.error);
+      } else {
+        setResult(data);
+      }
+    } catch (err) {
+      setError('Failed to connect to backend.');
+    }
+    setLoading(false);
+  };
+
   return (
     <div className="max-w-lg mx-auto bg-white shadow-lg rounded-lg p-6 mt-8">
       <h2 className="text-2xl font-bold mb-4 text-green-700">Scan Product Photo &amp; Analyze Ingredients</h2>
