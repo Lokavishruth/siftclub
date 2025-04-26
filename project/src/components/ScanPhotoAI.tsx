@@ -6,6 +6,11 @@ const ScanPhotoAI: React.FC = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const [barcode, setBarcode] = useState('');
+  const [barcodeResult, setBarcodeResult] = useState<null | { product_name: string; brands: string; code: string; ingredients_text: string }>(null);
+  const [barcodeError, setBarcodeError] = useState('');
+  const [barcodeLoading, setBarcodeLoading] = useState(false);
+
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setPhoto(e.target.files[0]);
@@ -39,6 +44,36 @@ const ScanPhotoAI: React.FC = () => {
     setLoading(false);
   };
 
+  const handleBarcodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setBarcode(e.target.value);
+  };
+
+  const handleBarcodeLookup = async () => {
+    if (!barcode.trim()) {
+      setBarcodeError('Please enter a barcode.');
+      return;
+    }
+    setBarcodeLoading(true);
+    setBarcodeError('');
+    setBarcodeResult(null);
+    try {
+      const res = await fetch('/api/barcode-lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ barcode }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setBarcodeError(data.error);
+      } else {
+        setBarcodeResult(data);
+      }
+    } catch (err) {
+      setBarcodeError('Failed to connect to backend.');
+    }
+    setBarcodeLoading(false);
+  };
+
   return (
     <div className="max-w-lg mx-auto bg-white shadow-lg rounded-lg p-6 mt-8">
       <h2 className="text-2xl font-bold mb-4 text-green-700">Scan Product Photo &amp; Analyze Ingredients</h2>
@@ -63,6 +98,24 @@ const ScanPhotoAI: React.FC = () => {
           <pre className="whitespace-pre-wrap text-sm mt-2">{JSON.stringify(result, null, 2)}</pre>
         </div>
       )}
+      <div className="my-4 p-4 border rounded bg-gray-50">
+        <div className="mb-2 font-semibold">Scan or Enter Barcode:</div>
+        <div className="flex gap-2 mb-2">
+          <input type="text" value={barcode} onChange={handleBarcodeChange} placeholder="Enter barcode..." className="border rounded px-2 py-1 w-44" />
+          <button onClick={handleBarcodeLookup} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded" disabled={barcodeLoading}>
+            {barcodeLoading ? 'Looking up...' : 'Lookup'}
+          </button>
+        </div>
+        {barcodeError && <div className="text-red-600 text-sm mb-1">{barcodeError}</div>}
+        {barcodeResult && (
+          <div className="bg-white p-3 rounded shadow text-sm">
+            <div><b>Product:</b> {barcodeResult.product_name || 'Unknown'}</div>
+            <div><b>Brand:</b> {barcodeResult.brands || 'Unknown'}</div>
+            <div><b>Barcode:</b> {barcodeResult.code}</div>
+            <div><b>Ingredients:</b> {barcodeResult.ingredients_text || 'Not available'}</div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

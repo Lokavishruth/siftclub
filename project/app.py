@@ -99,6 +99,29 @@ def scan_url():
         print(f'Error in /scan_url: {e}')
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/barcode-lookup', methods=['POST'])
+def barcode_lookup():
+    data = request.get_json()
+    barcode = data.get('barcode', '').strip()
+    if not barcode:
+        return jsonify({'error': 'No barcode provided.'}), 400
+    url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
+    try:
+        resp = requests.get(url, timeout=5)
+        data = resp.json()
+        if data.get('status') == 1:
+            product = data['product']
+            return jsonify({
+                'product_name': product.get('product_name', ''),
+                'brands': product.get('brands', ''),
+                'code': product.get('code', barcode),
+                'ingredients_text': product.get('ingredients_text', 'Not available')
+            })
+        else:
+            return jsonify({'error': 'Product not found.'}), 404
+    except Exception as e:
+        return jsonify({'error': 'Lookup failed.'}), 500
+
 import logging
 import traceback
 
@@ -310,7 +333,7 @@ def serve_static(path):
 @app.errorhandler(404)
 def not_found(e):
     # If the path starts with an API route, return original 404
-    if request.path.startswith(('/chat', '/scan_url', '/scan_photo')):
+    if request.path.startswith(('/chat', '/scan_url', '/scan_photo', '/api/barcode-lookup')):
         return jsonify({'error': 'Not found'}), 404
     # Otherwise, serve the frontend
     return send_from_directory(app.static_folder, 'index.html')
