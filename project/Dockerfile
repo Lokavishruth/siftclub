@@ -12,7 +12,7 @@ COPY app.py ./
 COPY .env ./
 
 # Expose backend port
-EXPOSE 5000
+EXPOSE 10000
 
 # ---- Frontend (Vite/React) ----
 FROM node:20-alpine as frontend
@@ -43,12 +43,12 @@ COPY --from=backend /app /app
 COPY --from=frontend /frontend/dist /app/dist
 
 # Install production server for static files
-RUN pip install flask-cors
+RUN pip install flask-cors gunicorn
 
 # Simple server to serve both Flask API and static frontend
 COPY app.py ./
 
 # Expose backend port
-EXPOSE 5000
+EXPOSE 10000
 
-CMD ["python", "app.py"]
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:10000"]
