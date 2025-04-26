@@ -159,5 +159,14 @@ def serve_static(path):
     else:
         return send_from_directory(app.static_folder, "index.html")
 
+# Catch-all route for SPA (serves index.html for all non-API, non-static routes)
+@app.errorhandler(404)
+def not_found(e):
+    # If the path starts with an API route, return original 404
+    if request.path.startswith(('/chat', '/scan_url', '/scan_photo')):
+        return jsonify({'error': 'Not found'}), 404
+    # Otherwise, serve the frontend
+    return send_from_directory(app.static_folder, 'index.html')
+
 if __name__ == '__main__':
     app.run(debug=True)
