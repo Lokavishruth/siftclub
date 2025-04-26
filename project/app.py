@@ -122,9 +122,9 @@ def scan_photo():
         return None
 
     if 'profile' in request.form:
-            product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
-            logging.info(f'Fetching product info from: {product_url}')
-            try:
+        product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
+        logging.info(f'Fetching product info from: {product_url}')
+        try:
                 resp = requests.get(product_url, timeout=7)
                 logging.info(f'Open Food Facts response status: {resp.status_code}')
                 resp.raise_for_status()
@@ -170,87 +170,87 @@ def scan_photo():
                 return jsonify({'error': 'An unexpected error occurred while fetching product info.'}), 500
 
         elif photo_file:
-            logging.info('Using provided photo file.')
-            filename = secure_filename(photo_file.filename or 'upload.bin')
-            fd, tmp_path = tempfile.mkstemp()
-            try:
-                photo_file.save(tmp_path)
-                logging.info(f'Photo saved temporarily to: {tmp_path}')
+        logging.info('Using provided photo file.')
+        filename = secure_filename(photo_file.filename or 'upload.bin')
+        fd, tmp_path = tempfile.mkstemp()
+        try:
+            photo_file.save(tmp_path)
+            logging.info(f'Photo saved temporarily to: {tmp_path}')
 
-                scan_api_url = 'https://api.scanifly.com/barcode/scan'
-                logging.info(f'Sending photo to barcode scanning API: {scan_api_url}')
-                with open(tmp_path, 'rb') as f:
-                    files = {'photo': (filename, f, photo_file.mimetype)}
-                    try:
-                        resp = requests.post(scan_api_url, files=files, timeout=15)
-                        logging.info(f'Barcode scanning API response status: {resp.status_code}')
-                        resp.raise_for_status()
+            scan_api_url = 'https://api.scanifly.com/barcode/scan'
+            logging.info(f'Sending photo to barcode scanning API: {scan_api_url}')
+            with open(tmp_path, 'rb') as f:
+                files = {'photo': (filename, f, photo_file.mimetype)}
+                try:
+                    resp = requests.post(scan_api_url, files=files, timeout=15)
+                    logging.info(f'Barcode scanning API response status: {resp.status_code}')
+                    resp.raise_for_status()
 
-                        scan_data = resp.json()
-                        logging.info("Successfully parsed barcode scanning API JSON response.")
+                    scan_data = resp.json()
+                    logging.info("Successfully parsed barcode scanning API JSON response.")
 
-                        barcode = scan_data.get('barcode')
-                        if not barcode:
-                            logging.warning('Barcode not detected in image by external API')
-                            return jsonify({'error': 'Barcode not detected in the provided image.'}), 400
+                    barcode = scan_data.get('barcode')
+                    if not barcode:
+                        logging.warning('Barcode not detected in image by external API')
+                        return jsonify({'error': 'Barcode not detected in the provided image.'}), 400
 
-                        logging.info(f'Barcode detected by API: {barcode}')
+                    logging.info(f'Barcode detected by API: {barcode}')
 
-                        product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
-                        logging.info(f'Fetching product info from: {product_url}')
+                    product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
+                    logging.info(f'Fetching product info from: {product_url}')
 
-                        resp2 = requests.get(product_url, timeout=10)
-                        logging.info(f'Open Food Facts response status: {resp2.status_code}')
-                        resp2.raise_for_status()
+                    resp2 = requests.get(product_url, timeout=10)
+                    logging.info(f'Open Food Facts response status: {resp2.status_code}')
+                    resp2.raise_for_status()
 
-                        data = resp2.json()
-                        logging.info("Successfully parsed Open Food Facts JSON response.")
+                    data = resp2.json()
+                    logging.info("Successfully parsed Open Food Facts JSON response.")
 
-                        if data.get('status') != 1 or 'product' not in data:
-                            logging.warning('Product not found or invalid response from Open Food Facts')
-                            return jsonify({'error': 'Product not found in Open Food Facts database.'}), 404
+                    if data.get('status') != 1 or 'product' not in data:
+                        logging.warning('Product not found or invalid response from Open Food Facts')
+                        return jsonify({'error': 'Product not found in Open Food Facts database.'}), 404
 
-                        product = data['product']
-                        ingredients = product.get('ingredients_text', '')
-                        if not ingredients:
-                            logging.warning('No ingredients found for product')
-                            return jsonify({'error': 'No ingredients listed for this product.'}), 404
-                        logging.info("Successfully extracted ingredients from Open Food Facts.")
+                    product = data['product']
+                    ingredients = product.get('ingredients_text', '')
+                    if not ingredients:
+                        logging.warning('No ingredients found for product')
+                        return jsonify({'error': 'No ingredients listed for this product.'}), 404
+                    logging.info("Successfully extracted ingredients from Open Food Facts.")
 
-                    except requests.exceptions.Timeout:
-                        logging.error('Timeout contacting external API (Scanifly or Open Food Facts)')
-                        return jsonify({'error': 'Timeout contacting external services.'}), 504
-                    except requests.exceptions.HTTPError as e:
-                        logging.error(f'HTTP error contacting external API: {e}')
-                        if e.response.status_code == 400:
-                            return jsonify({'error': 'Error scanning barcode from image (API returned 400).'}), 400
-                        return jsonify({'error': f'Error contacting external services: Status {e.response.status_code}'}), 502
-                    except requests.exceptions.RequestException as e:
-                        logging.error(f'Network error contacting external API: {e}')
-                        logging.error(traceback.format_exc())
-                        return jsonify({'error': f'Network error contacting external services: {str(e)}'}), 502
-                    except ValueError as e:
-                        logging.error(f'JSON decode error from external API: {e}')
-                        logging.error(traceback.format_exc())
-                        return jsonify({'error': 'Invalid response received from external services.'}), 502
-                    except KeyError as e:
-                        logging.error(f'Missing key in external API response: {e}')
-                        logging.error(traceback.format_exc())
-                        return jsonify({'error': 'Unexpected data format from external services.'}), 500
-                    except Exception as e:
-                        logging.error(f'Unexpected error during photo processing or API calls: {e}')
-                        logging.error(traceback.format_exc())
-                        return jsonify({'error': 'An unexpected error occurred while processing the photo.'}), 500
-            finally:
-                if tmp_path and os.path.exists(tmp_path):
-                    try:
-                        os.unlink(tmp_path)
-                        logging.info(f'Deleted temporary file: {tmp_path}')
-                    except Exception as e_unlink:
-                        logging.error(f'Error deleting temporary file {tmp_path}: {e_unlink}')
+                except requests.exceptions.Timeout:
+                    logging.error('Timeout contacting external API (Scanifly or Open Food Facts)')
+                    return jsonify({'error': 'Timeout contacting external services.'}), 504
+                except requests.exceptions.HTTPError as e:
+                    logging.error(f'HTTP error contacting external API: {e}')
+                    if e.response.status_code == 400:
+                        return jsonify({'error': 'Error scanning barcode from image (API returned 400).'}), 400
+                    return jsonify({'error': f'Error contacting external services: Status {e.response.status_code}'}), 502
+                except requests.exceptions.RequestException as e:
+                    logging.error(f'Network error contacting external API: {e}')
+                    logging.error(traceback.format_exc())
+                    return jsonify({'error': f'Network error contacting external services: {str(e)}'}), 502
+                except ValueError as e:
+                    logging.error(f'JSON decode error from external API: {e}')
+                    logging.error(traceback.format_exc())
+                    return jsonify({'error': 'Invalid response received from external services.'}), 502
+                except KeyError as e:
+                    logging.error(f'Missing key in external API response: {e}')
+                    logging.error(traceback.format_exc())
+                    return jsonify({'error': 'Unexpected data format from external services.'}), 500
+                except Exception as e:
+                    logging.error(f'Unexpected error during photo processing or API calls: {e}')
+                    logging.error(traceback.format_exc())
+                    return jsonify({'error': 'An unexpected error occurred while processing the photo.'}), 500
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                    logging.info(f'Deleted temporary file: {tmp_path}')
+                except Exception as e_unlink:
+                    logging.error(f'Error deleting temporary file {tmp_path}: {e_unlink}')
 
-        else:
-            logging.error('No barcode or photo provided in request.')
+    else:
+        logging.error('No barcode or photo provided in request.')
             return jsonify({'error': 'No barcode or photo provided.'}), 400
 
         # At this point, we have ingredients
