@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import openai
 from dotenv import load_dotenv
@@ -13,7 +13,7 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="dist", static_url_path="/")
 CORS(app)
 
 @app.route('/chat', methods=['POST'])
@@ -146,6 +146,18 @@ def scan_photo():
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         return jsonify({'error': str(e)}), 500
+
+@app.route("/")
+def serve_frontend():
+    return send_from_directory(app.static_folder, "index.html")
+
+# Serve static files (JS, CSS, etc.)
+@app.route("/<path:path>")
+def serve_static(path):
+    if os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    else:
+        return send_from_directory(app.static_folder, "index.html")
 
 if __name__ == '__main__':
     app.run(debug=True)

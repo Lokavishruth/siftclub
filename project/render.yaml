@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: ingredient-risk-analyzer
+    env: python
+    buildCommand: bash build.sh
+    startCommand: gunicorn app:app --bind 0.0.0.0:10000
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /
