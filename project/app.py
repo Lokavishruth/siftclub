@@ -30,7 +30,6 @@ def chat():
     prompt = data.get('prompt', '')
     if not prompt:
         return jsonify({'error': 'No prompt provided.'}), 400
-    # Only allow ingredient text, not barcode/photo
     try:
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -39,7 +38,14 @@ def chat():
             temperature=0.7
         )
         answer = response.choices[0].message.content.strip()
-        return jsonify({'response': answer})
+        # Always return unified structure for frontend
+        return jsonify({
+            'product_name': '',
+            'brands': '',
+            'code': '',
+            'ingredients_text': prompt,
+            'openai_response': answer
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

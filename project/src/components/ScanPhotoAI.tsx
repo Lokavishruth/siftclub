@@ -1,17 +1,27 @@
 import React, { useState } from 'react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import Quagga from 'quagga';
 
 const ScanPhotoAI: React.FC = () => {
   const [photo, setPhoto] = useState<File | null>(null);
-  const [result, setResult] = useState<null | { barcode: string; ingredients: string; openai_response: string }>(null);
+  const [result, setResult] = useState<ProductResult | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const [barcode, setBarcode] = useState('');
-  const [barcodeResult, setBarcodeResult] = useState<null | { product_name: string; brands: string; code: string; ingredients_text: string; openai_response: string }>(null);
+  const [barcodeResult, setBarcodeResult] = useState<ProductResult | null>(null);
   const [barcodeError, setBarcodeError] = useState('');
   const [barcodeLoading, setBarcodeLoading] = useState(false);
+
+  // Unified type for all result flows
+  interface ProductResult {
+    product_name: string;
+    brands: string;
+    code: string;
+    ingredients_text: string;
+    openai_response: string;
+  }
 
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -19,29 +29,107 @@ const ScanPhotoAI: React.FC = () => {
     }
   };
 
-  const handlePhotoUpload = async () => {
-    if (!photo) {
-      setError('Please select or take a photo of the product.');
-      return;
-    }
+  // Helper: Scan barcode from uploaded image using QuaggaJS
+  function scanBarcodeFromImage(file: File): Promise<string | null> {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const img = new window.Image();
+        img.onload = function () {
+          Quagga.decodeSingle({
+            src: img.src,
+            numOfWorkers: 0,
+            inputStream: {
+              size: 800 // restrict input-size for performance
+            },
+            decoder: {
+              readers: [
+                'ean_reader',
+                'ean_8_reader',
+                'upc_reader',
+                'upc_e_reader',
+                'code_128_reader',
+                'code_39_reader',
+                'i2of5_reader'
+              ]
+            }
+          }, function (result: any) {
+            if (result && result.codeResult && result.codeResult.code) {
+              resolve(result.codeResult.code);
+            } else {
+              resolve(null);
+            }
+          });
+        };
+        img.src = e.target?.result as string;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Modified photo upload handler to scan barcode before sending to backend
+  const handlePhotoUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
     setLoading(true);
     setError('');
     setResult(null);
-    const formData = new FormData();
-    formData.append('photo', photo);
-    try {
-      const res = await fetch('/scan_photo', {
+    if (!photo) {
+      setError('Please select a photo.');
+      setLoading(false);
+      return;
+    }
+    // Try to scan barcode from image on client
+    const detectedBarcode = await scanBarcodeFromImage(photo);
+    let res, data;
+    if (detectedBarcode) {
+      // If barcode found, use barcode lookup endpoint
+      res = await fetch('/api/barcode-lookup', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ barcode: detectedBarcode })
       });
-      const data = await res.json();
+      data = await res.json();
       if (data.error) {
         setError(data.error);
-      } else {
-        setResult(data);
+        setLoading(false);
+        return;
       }
-    } catch (err) {
-      setError('Failed to connect to backend.');
+      // Now get AI analysis for ingredients
+      const aiRes = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: data.ingredients_text })
+      });
+      const aiData = await aiRes.json();
+      setResult({
+        product_name: data.product_name || '',
+        brands: data.brands || '',
+        code: data.code || detectedBarcode,
+        ingredients_text: data.ingredients_text || '',
+        openai_response: aiData.openai_response || aiData.response || ''
+      });
+      setLoading(false);
+      return;
+    }
+    // If no barcode found, fallback to backend photo scan
+    const formData = new FormData();
+    formData.append('photo', photo);
+    res = await fetch('/scan_photo', {
+      method: 'POST',
+      body: formData,
+    });
+    data = await res.json();
+    if (data.error) {
+      setError(data.error);
+    } else {
+      // Normalize result structure regardless of backend response
+      setResult({
+        product_name: data.product_name || '',
+        brands: data.brands || '',
+        code: data.code || data.barcode || '',
+        ingredients_text: data.ingredients_text || data.ingredients || '',
+        openai_response: data.openai_response || data.response || ''
+      });
     }
     setLoading(false);
   };
@@ -68,7 +156,13 @@ const ScanPhotoAI: React.FC = () => {
       if (data.error) {
         setBarcodeError(data.error);
       } else {
-        setBarcodeResult(data);
+        setBarcodeResult({
+          product_name: data.product_name || '',
+          brands: data.brands || '',
+          code: data.code || barcode,
+          ingredients_text: data.ingredients_text || '',
+          openai_response: data.openai_response || data.response || ''
+        });
       }
     } catch (err) {
       setBarcodeError('Failed to connect to backend.');
@@ -114,38 +208,52 @@ const ScanPhotoAI: React.FC = () => {
     );
   }
 
-  // Download report as PDF
-  function downloadReport(result: any) {
-    const doc = new jsPDF();
-    doc.setFontSize(16);
-    doc.text('Product Analysis Report', 14, 18);
-    doc.setFontSize(11);
-    let y = 28;
-    doc.text(`Product: ${result.product_name || 'Unknown'}`, 14, y); y += 7;
-    doc.text(`Brand: ${result.brands || 'Unknown'}`, 14, y); y += 7;
-    doc.text(`Barcode: ${result.code || 'N/A'}`, 14, y); y += 7;
-    doc.text(`Ingredients: ${result.ingredients_text || 'Not available'}`, 14, y); y += 10;
+  // Download report as PDF (mobile-friendly)
+  function downloadReport(result: ProductResult) {
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    const margin = 32;
+    let y = margin + 8;
+    doc.setFontSize(22);
+    doc.text('Product Analysis Report', margin, y);
+    doc.setFontSize(13);
+    y += 28;
+    doc.text(`Product: ${result.product_name || 'Unknown'}`, margin, y); y += 20;
+    doc.text(`Brand: ${result.brands || 'Unknown'}`, margin, y); y += 20;
+    doc.text(`Barcode: ${result.code || 'N/A'}`, margin, y); y += 20;
+    doc.text(`Ingredients:`, margin, y); y += 18;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(12);
+    doc.text(doc.splitTextToSize(result.ingredients_text || 'Not available', 540), margin + 16, y); y += 24 + 10 * Math.ceil((result.ingredients_text || 'Not available').length / 80);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
     try {
       const parsed = JSON.parse(result.openai_response);
-      doc.text('Ingredient Risks:', 14, y); y += 7;
+      doc.text('Ingredient Risks:', margin, y); y += 18;
+      doc.setFont('helvetica', 'normal');
       parsed.ingredient_risks?.forEach((r: any) => {
-        doc.text(`${r.risk === 'safe' ? '🟢' : r.risk === 'moderate' ? '🟡' : '🔴'} ${r.ingredient}: ${r.risk} - ${r.reason}`, 18, y); y += 6;
+        doc.text(`${r.risk === 'safe' ? '🟢' : r.risk === 'moderate' ? '🟡' : '🔴'} ${r.ingredient}: ${r.risk} - ${r.reason}`, margin + 16, y, { maxWidth: 520 }); y += 18;
       });
-      y += 2;
-      doc.text('Healthy Alternatives:', 14, y); y += 7;
+      y += 8;
+      doc.setFont('helvetica', 'bold');
+      doc.text('Healthy Alternatives:', margin, y); y += 18;
+      doc.setFont('helvetica', 'normal');
       parsed.healthy_alternatives?.forEach((alt: any) => {
-        doc.text(`💡 ${alt.suggestion}: ${alt.reason}`, 18, y); y += 6;
+        doc.text(`💡 ${alt.suggestion}: ${alt.reason}`, margin + 16, y, { maxWidth: 520 }); y += 18;
       });
-      y += 2;
+      y += 8;
       if(parsed.ailment_explanations) {
-        doc.text('Ailment Explanations:', 14, y); y += 7;
+        doc.setFont('helvetica', 'bold');
+        doc.text('Ailment Explanations:', margin, y); y += 18;
+        doc.setFont('helvetica', 'normal');
         parsed.ailment_explanations.forEach((a: any) => {
-          doc.text(`⚠️ ${a.ailment}: ${a.why_bad}`, 18, y); y += 6;
+          doc.text(`⚠️ ${a.ailment}: ${a.why_bad}`, margin + 16, y, { maxWidth: 520 }); y += 18;
         });
       }
     } catch {
-      doc.text('AI Report:', 14, y); y += 7;
-      doc.text(result.openai_response || '', 18, y);
+      doc.setFont('helvetica', 'bold');
+      doc.text('AI Report:', margin, y); y += 18;
+      doc.setFont('helvetica', 'normal');
+      doc.text(doc.splitTextToSize(result.openai_response || '', 520), margin + 16, y);
     }
     doc.save('product_report.pdf');
   }
@@ -153,20 +261,22 @@ const ScanPhotoAI: React.FC = () => {
   return (
     <div className="max-w-lg mx-auto bg-white shadow-lg rounded-lg p-6 mt-8">
       <h2 className="text-2xl font-bold mb-4 text-green-700">Scan Product Photo &amp; Analyze Ingredients</h2>
-      <input
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={handlePhotoChange}
-        className="mb-4 block w-full"
-      />
-      <button
-        onClick={handlePhotoUpload}
-        className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded mb-4 w-full"
-        disabled={loading}
-      >
-        {loading ? 'Analyzing...' : 'Analyze Product'}
-      </button>
+      <form onSubmit={handlePhotoUpload}>
+        <input
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handlePhotoChange}
+          className="mb-4 block w-full"
+        />
+        <button
+          type="submit"
+          className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded mb-4 w-full"
+          disabled={loading}
+        >
+          {loading ? 'Analyzing...' : 'Analyze Product'}
+        </button>
+      </form>
       {error && <div className="text-red-600 mb-2">{error}</div>}
       {result && (
         <div className="bg-gray-100 p-4 rounded mt-4">
