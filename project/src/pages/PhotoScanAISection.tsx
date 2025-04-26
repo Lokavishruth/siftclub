@@ -73,13 +73,12 @@ const PhotoScanAISection: React.FC = () => {
     setError('');
     setResult(null);
     try {
-      const res = await fetch('/scan_url', {
+      const formData = new FormData();
+      formData.append('barcode', barcode);
+      if (userProfile) formData.append('profile', JSON.stringify(userProfile));
+      const res = await fetch('/scan_photo', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: `https://world.openfoodfacts.org/product/${barcode}`,
-          profile: userProfile
-        })
+        body: formData,
       });
       const data = await res.json();
       if (data.error) {
