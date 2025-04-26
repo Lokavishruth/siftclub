@@ -39,25 +39,33 @@ def chat():
 
 @app.route('/scan_url', methods=['POST'])
 def scan_url():
+    print('Received request to /scan_url')
     data = request.get_json()
     url = data.get('url', '')
     user_profile = data.get('profile', None)
+    print(f'URL: {url}, user_profile: {user_profile}')
     if not url:
+        print('No URL provided')
         return jsonify({'error': 'No URL provided.'}), 400
     # Extract barcode from Open Food Facts URL
     m = re.search(r'/product/(\d+)', url)
     if not m:
+        print('Invalid Open Food Facts URL')
         return jsonify({'error': 'Invalid Open Food Facts URL.'}), 400
     barcode = m.group(1)
     product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
+    print(f'Fetching product info from: {product_url}')
     try:
         resp = requests.get(product_url, timeout=7)
+        print(f'Product info response status: {resp.status_code}')
         data = resp.json()
         if data.get('status') != 1:
+            print('Product not found')
             return jsonify({'error': 'Product not found.'}), 404
         product = data['product']
         ingredients = product.get('ingredients_text', '')
         if not ingredients:
+            print('No ingredients found')
             return jsonify({'error': 'No ingredients found.'}), 404
         # Pass only ingredients to OpenAI
         profile_str = ''
@@ -72,6 +80,7 @@ def scan_url():
             f"Ingredients: {ingredients}\n"
             "Respond ONLY with the JSON object."
         )
+        print('Sending prompt to OpenAI')
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
@@ -79,8 +88,10 @@ def scan_url():
             temperature=0.7
         )
         answer = response.choices[0].message.content.strip()
+        print('Returning AI response')
         return jsonify({'ingredients': ingredients, 'openai_response': answer})
     except Exception as e:
+        print(f'Error in /scan_url: {e}')
         return jsonify({'error': str(e)}), 500
 
 @app.route('/scan_photo', methods=['POST'])
