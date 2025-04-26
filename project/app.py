@@ -286,6 +286,9 @@ def scan_photo():
         answer = response.choices[0].message.content.strip()
         logging.info('Returning AI response')
         return jsonify({'barcode': barcode, 'ingredients': ingredients, 'openai_response': answer})
+    except openai.error.APIConnectionError as e:
+        logging.error(f'OpenAI API connection error: {e}')
+        return jsonify({'error': 'Could not connect to OpenAI API. Please try again later.'}), 503
     except Exception as e:
         logging.error(f'Error in OpenAI call: {e}')
         logging.error(traceback.format_exc())
