@@ -100,6 +100,19 @@ def scan_photo():
     user_profile = None
     barcode = None
     ingredients = None
+
+    # Barcode parser: extract barcode from possible fields or text
+    def extract_barcode(value):
+        import re
+        # Accepts barcodes as numbers, or as part of a URL (e.g. Open Food Facts)
+        if not value:
+            return None
+        # Try to find a sequence of 8-14 digits (common barcode lengths)
+        m = re.search(r'(\d{8,14})', value)
+        if m:
+            return m.group(1)
+        return None
+
     if 'profile' in request.form:
         try:
             user_profile = request.form['profile']
@@ -107,9 +120,13 @@ def scan_photo():
         except Exception as e:
             print(f'Error parsing profile: {e}')
             user_profile = None
+    # Accept barcode from various possible fields
     if 'barcode' in request.form:
-        barcode = request.form['barcode']
-        print(f'Barcode received directly: {barcode}')
+        barcode_raw = request.form['barcode']
+        barcode = extract_barcode(barcode_raw)
+        print(f'Barcode parsed: {barcode} (from: {barcode_raw})')
+        if not barcode:
+            return jsonify({'error': 'Invalid or missing barcode.'}), 400
         # Fetch product info from Open Food Facts
         try:
             product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
