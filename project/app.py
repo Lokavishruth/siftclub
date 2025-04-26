@@ -10,6 +10,11 @@ import tempfile
 
 load_dotenv()
 
+import logging
+# Set ERROR level logs on Render, INFO otherwise
+log_level = logging.ERROR if os.environ.get('RENDER') else logging.INFO
+logging.basicConfig(level=log_level, format='%(asctime)s %(levelname)s %(message)s')
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
@@ -94,6 +99,9 @@ def scan_url():
         print(f'Error in /scan_url: {e}')
         return jsonify({'error': str(e)}), 500
 
+import logging
+import traceback
+
 @app.route('/scan_photo', methods=['POST'])
 def scan_photo():
     print('Received request to /scan_photo')
@@ -114,113 +122,165 @@ def scan_photo():
         return None
 
     if 'profile' in request.form:
-        try:
-            user_profile = request.form['profile']
-            print(f'User profile: {user_profile}')
-        except Exception as e:
-            print(f'Error parsing profile: {e}')
-            user_profile = None
-    # Accept barcode from various possible fields
-    if 'barcode' in request.form:
-        barcode_raw = request.form['barcode']
-        barcode = extract_barcode(barcode_raw)
-        print(f'Barcode parsed: {barcode} (from: {barcode_raw})')
-        if not barcode:
-            return jsonify({'error': 'Invalid or missing barcode.'}), 400
-        # Fetch product info from Open Food Facts
-        try:
             product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
-            print(f'Fetching product info from: {product_url}')
-            resp2 = requests.get(product_url, timeout=7)
-            print(f'Product info response status: {resp2.status_code}')
-            data = resp2.json()
-            if data.get('status') != 1:
-                print('Product not found in Open Food Facts')
-                return jsonify({'error': 'Product not found.'}), 404
-            product = data['product']
-            ingredients = product.get('ingredients_text', '')
-            if not ingredients:
-                print('No ingredients found for product')
-                return jsonify({'error': 'No ingredients found.'}), 404
-        except Exception as e:
-            print(f'Error fetching product info from Open Food Facts: {e}')
-            return jsonify({'error': f'Error fetching product info: {str(e)}'}), 500
-    elif 'ingredients' in request.form:
-        ingredients = request.form['ingredients']
-        print(f'Ingredients received directly: {ingredients}')
-    else:
-        if 'photo' not in request.files:
-            print('No photo uploaded in request.files')
-            return jsonify({'error': 'No photo uploaded.'}), 400
-        photo = request.files['photo']
-        if photo.filename == '':
-            print('No photo selected (empty filename)')
-            return jsonify({'error': 'No photo selected.'}), 400
-        # Save to temp file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
-            photo.save(tmp.name)
-            tmp_path = tmp.name
-            print(f'Photo saved to temp path: {tmp_path}')
+            logging.info(f'Fetching product info from: {product_url}')
+            try:
+                resp = requests.get(product_url, timeout=7)
+                logging.info(f'Open Food Facts response status: {resp.status_code}')
+                resp.raise_for_status()
+
+                data = resp.json()
+                logging.info("Successfully parsed Open Food Facts JSON response.")
+
+                if data.get('status') != 1 or 'product' not in data:
+                    logging.warning('Product not found or invalid response from Open Food Facts')
+                    return jsonify({'error': 'Product not found in Open Food Facts database.'}), 404
+
+                product = data['product']
+                ingredients = product.get('ingredients_text', '')
+                if not ingredients:
+                    logging.warning('No ingredients found for product')
+                    return jsonify({'error': 'No ingredients listed for this product.'}), 404
+                logging.info("Successfully extracted ingredients from Open Food Facts.")
+
+            except requests.exceptions.Timeout:
+                logging.error(f'Timeout fetching Open Food Facts for barcode {barcode}')
+                return jsonify({'error': 'Timeout contacting Open Food Facts.'}), 504
+            except requests.exceptions.HTTPError as e:
+                logging.error(f'HTTP error fetching Open Food Facts for barcode {barcode}: {e}')
+                if e.response.status_code == 404:
+                    return jsonify({'error': 'Product not found in Open Food Facts database.'}), 404
+                else:
+                    return jsonify({'error': f'Error contacting Open Food Facts: Status {e.response.status_code}'}), 502
+            except requests.exceptions.RequestException as e:
+                logging.error(f'Network error fetching Open Food Facts for barcode {barcode}: {e}')
+                logging.error(traceback.format_exc())
+                return jsonify({'error': f'Network error contacting Open Food Facts: {str(e)}'}), 502
+            except ValueError as e:
+                logging.error(f'JSON decode error for Open Food Facts barcode {barcode}: {e}')
+                logging.error(traceback.format_exc())
+                return jsonify({'error': 'Invalid response received from Open Food Facts.'}), 502
+            except KeyError as e:
+                logging.error(f'Missing key in Open Food Facts response for barcode {barcode}: {e}')
+                logging.error(traceback.format_exc())
+                return jsonify({'error': 'Unexpected data format from Open Food Facts.'}), 500
+            except Exception as e:
+                logging.error(f'Unexpected error fetching/processing Open Food Facts for barcode {barcode}: {e}')
+                logging.error(traceback.format_exc())
+                return jsonify({'error': 'An unexpected error occurred while fetching product info.'}), 500
+
+        elif photo_file:
+            logging.info('Using provided photo file.')
+            filename = secure_filename(photo_file.filename or 'upload.bin')
+            fd, tmp_path = tempfile.mkstemp()
+            try:
+                photo_file.save(tmp_path)
+                logging.info(f'Photo saved temporarily to: {tmp_path}')
+
+                scan_api_url = 'https://api.scanifly.com/barcode/scan'
+                logging.info(f'Sending photo to barcode scanning API: {scan_api_url}')
+                with open(tmp_path, 'rb') as f:
+                    files = {'photo': (filename, f, photo_file.mimetype)}
+                    try:
+                        resp = requests.post(scan_api_url, files=files, timeout=15)
+                        logging.info(f'Barcode scanning API response status: {resp.status_code}')
+                        resp.raise_for_status()
+
+                        scan_data = resp.json()
+                        logging.info("Successfully parsed barcode scanning API JSON response.")
+
+                        barcode = scan_data.get('barcode')
+                        if not barcode:
+                            logging.warning('Barcode not detected in image by external API')
+                            return jsonify({'error': 'Barcode not detected in the provided image.'}), 400
+
+                        logging.info(f'Barcode detected by API: {barcode}')
+
+                        product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
+                        logging.info(f'Fetching product info from: {product_url}')
+
+                        resp2 = requests.get(product_url, timeout=10)
+                        logging.info(f'Open Food Facts response status: {resp2.status_code}')
+                        resp2.raise_for_status()
+
+                        data = resp2.json()
+                        logging.info("Successfully parsed Open Food Facts JSON response.")
+
+                        if data.get('status') != 1 or 'product' not in data:
+                            logging.warning('Product not found or invalid response from Open Food Facts')
+                            return jsonify({'error': 'Product not found in Open Food Facts database.'}), 404
+
+                        product = data['product']
+                        ingredients = product.get('ingredients_text', '')
+                        if not ingredients:
+                            logging.warning('No ingredients found for product')
+                            return jsonify({'error': 'No ingredients listed for this product.'}), 404
+                        logging.info("Successfully extracted ingredients from Open Food Facts.")
+
+                    except requests.exceptions.Timeout:
+                        logging.error('Timeout contacting external API (Scanifly or Open Food Facts)')
+                        return jsonify({'error': 'Timeout contacting external services.'}), 504
+                    except requests.exceptions.HTTPError as e:
+                        logging.error(f'HTTP error contacting external API: {e}')
+                        if e.response.status_code == 400:
+                            return jsonify({'error': 'Error scanning barcode from image (API returned 400).'}), 400
+                        return jsonify({'error': f'Error contacting external services: Status {e.response.status_code}'}), 502
+                    except requests.exceptions.RequestException as e:
+                        logging.error(f'Network error contacting external API: {e}')
+                        logging.error(traceback.format_exc())
+                        return jsonify({'error': f'Network error contacting external services: {str(e)}'}), 502
+                    except ValueError as e:
+                        logging.error(f'JSON decode error from external API: {e}')
+                        logging.error(traceback.format_exc())
+                        return jsonify({'error': 'Invalid response received from external services.'}), 502
+                    except KeyError as e:
+                        logging.error(f'Missing key in external API response: {e}')
+                        logging.error(traceback.format_exc())
+                        return jsonify({'error': 'Unexpected data format from external services.'}), 500
+                    except Exception as e:
+                        logging.error(f'Unexpected error during photo processing or API calls: {e}')
+                        logging.error(traceback.format_exc())
+                        return jsonify({'error': 'An unexpected error occurred while processing the photo.'}), 500
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                        logging.info(f'Deleted temporary file: {tmp_path}')
+                    except Exception as e_unlink:
+                        logging.error(f'Error deleting temporary file {tmp_path}: {e_unlink}')
+
+        else:
+            logging.error('No barcode or photo provided in request.')
+            return jsonify({'error': 'No barcode or photo provided.'}), 400
+
+        # At this point, we have ingredients
         try:
-            # Upload to Open Food Facts image recognition endpoint
-            files = {'imagefile': (secure_filename(photo.filename), open(tmp_path, 'rb'), 'image/jpeg')}
-            print('Sending request to Open Food Facts image recognition endpoint')
-            resp = requests.post('https://world.openfoodfacts.org/cgi/product_image_upload.pl?process_image=1', files=files, timeout=20)
-            print(f'Response from Open Food Facts: {resp.status_code}')
-            # Extract barcode from response
-            m = re.search(r'barcode=(\d+)', resp.text)
-            if not m:
-                print('Barcode not detected in image')
-                os.unlink(tmp_path)
-                return jsonify({'error': 'Barcode not detected in image.'}), 404
-            barcode = m.group(1)
-            print(f'Barcode detected: {barcode}')
-            # Now fetch product info
-            product_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
-            print(f'Fetching product info from: {product_url}')
-            resp2 = requests.get(product_url, timeout=7)
-            print(f'Product info response status: {resp2.status_code}')
-            data = resp2.json()
-            if data.get('status') != 1:
-                print('Product not found in Open Food Facts')
-                os.unlink(tmp_path)
-                return jsonify({'error': 'Product not found.'}), 404
-            product = data['product']
-            ingredients = product.get('ingredients_text', '')
-            if not ingredients:
-                print('No ingredients found for product')
-                os.unlink(tmp_path)
-                return jsonify({'error': 'No ingredients found.'}), 404
-            os.unlink(tmp_path)
+            profile_str = ''
+            if user_profile:
+                profile_str = f"The user has the following health profile, allergies, dietary preferences, and ailments: {user_profile}. "
+            prompt = (
+                profile_str +
+                "Given the following list of food ingredients, generate a JSON object with the following fields:\n"
+                "1. 'ingredient_risks': an array where each object contains: 'ingredient', 'risk' (one of: 'safe', 'moderate', 'avoid'), and a brief 'reason'.\n"
+                "2. 'healthy_alternatives': an array of 3-5 healthy alternative suggestions (not brands or products), each as an object with 'suggestion' and 'reason' fields. For example: { 'suggestion': 'fresh fruit', 'reason': 'Naturally sweet and high in fiber' }.\n"
+                "3. 'ailment_explanations': an array where each object contains: 'ailment' (from the user's profile) and 'why_bad' (explain why this product or its ingredients may be problematic for that ailment).\n"
+                f"Ingredients: {ingredients}\n"
+                "Respond ONLY with the JSON object."
+            )
+            logging.info('Sending prompt to OpenAI')
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=512,
+                temperature=0.7
+            )
+            answer = response.choices[0].message.content.strip()
+            logging.info('Returning AI response')
+            return jsonify({'barcode': barcode, 'ingredients': ingredients, 'openai_response': answer})
         except Exception as e:
-            print(f'Error in /scan_photo: {e}')
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            logging.error(f'Error in OpenAI call: {e}')
+            logging.error(traceback.format_exc())
             return jsonify({'error': str(e)}), 500
-    # At this point, we have ingredients
-    try:
-        profile_str = ''
-        if user_profile:
-            profile_str = f"The user has the following health profile, allergies, dietary preferences, and ailments: {user_profile}. "
-        prompt = (
-            profile_str +
-            "Given the following list of food ingredients, generate a JSON object with the following fields:\n"
-            "1. 'ingredient_risks': an array where each object contains: 'ingredient', 'risk' (one of: 'safe', 'moderate', 'avoid'), and a brief 'reason'.\n"
-            "2. 'healthy_alternatives': an array of 3-5 healthy alternative suggestions (not brands or products), each as an object with 'suggestion' and 'reason' fields. For example: { 'suggestion': 'fresh fruit', 'reason': 'Naturally sweet and high in fiber' }.\n"
-            "3. 'ailment_explanations': an array where each object contains: 'ailment' (from the user's profile) and 'why_bad' (explain why this product or its ingredients may be problematic for that ailment).\n"
-            f"Ingredients: {ingredients}\n"
-            "Respond ONLY with the JSON object."
-        )
-        print('Sending prompt to OpenAI')
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=512,
-            temperature=0.7
-        )
-        answer = response.choices[0].message.content.strip()
-        print('Returning AI response')
-        return jsonify({'barcode': barcode, 'ingredients': ingredients, 'openai_response': answer})
     except Exception as e:
         print(f'Error in OpenAI call: {e}')
         return jsonify({'error': str(e)}), 500
