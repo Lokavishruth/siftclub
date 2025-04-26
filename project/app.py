@@ -281,6 +281,50 @@ def scan_photo():
         logging.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
+# --- NEW: Ingredient Text Analysis Endpoint ---
+@app.route('/scan_text', methods=['POST'])
+def scan_text():
+    print('Received request to /scan_text')
+    user_profile = None
+    ingredients = None
+    openai_response = ''
+    try:
+        if request.is_json:
+            data = request.get_json()
+            ingredients = data.get('ingredients', '')
+            user_profile = data.get('profile', None)
+        else:
+            ingredients = request.form.get('ingredients', '')
+            user_profile = request.form.get('profile', None)
+        if not ingredients:
+            return jsonify({'error': 'No ingredients provided.'}), 400
+        # Compose prompt for OpenAI
+        prompt = f"""
+You are a nutrition expert. Analyze the following list of food ingredients for health risks, allergens, and dietary suitability for an Indian audience. If a user profile is provided, personalize the analysis for their conditions/allergies. List ingredient risks, healthy alternatives, and explanations for any flagged ailments. Respond ONLY with a JSON object like this:
+{{
+  "ingredient_risks": [{{"ingredient": str, "risk": "safe|moderate|avoid", "reason": str}}],
+  "healthy_alternatives": [{{"suggestion": str, "reason": str}}],
+  "ailment_explanations": [{{"ailment": str, "why_bad": str}}]
+}}
+
+Ingredients: {ingredients}
+User Profile: {user_profile or 'N/A'}
+"""
+        import openai
+        import os
+        client = openai.OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=512,
+            temperature=0.7
+        )
+        answer = response.choices[0].message.content.strip()
+        return jsonify({'ingredients': ingredients, 'openai_response': answer})
+    except Exception as e:
+        print(f'Error in /scan_text: {e}')
+        return jsonify({'error': str(e)}), 500
+
 @app.route("/")
 def serve_frontend():
     return send_from_directory(app.static_folder, "index.html")
@@ -297,7 +341,7 @@ def serve_static(path):
 @app.errorhandler(404)
 def not_found(e):
     # If the path starts with an API route, return original 404
-    if request.path.startswith(('/chat', '/scan_url', '/scan_photo', '/api/barcode-lookup')):
+    if request.path.startswith(('/chat', '/scan_url', '/scan_photo', '/api/barcode-lookup', '/scan_text')):
         return jsonify({'error': 'Not found'}), 404
     # Otherwise, serve the frontend
     return send_from_directory(app.static_folder, 'index.html')

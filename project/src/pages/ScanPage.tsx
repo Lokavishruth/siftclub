@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Scan, Link, Upload, AlertCircle, Info } from 'lucide-react';
-import { mockScan } from '../utils/mockData';
 import PhotoScanAISection from './PhotoScanAISection'; // Import the new component
+import { useNavigate } from 'react-router-dom';
 
 type InputMethod = 'text' | 'photo' | 'link';
 type ScanStatus = 'idle' | 'scanning' | 'results';
@@ -11,19 +11,57 @@ const ScanPage: React.FC = () => {
   const [ingredientText, setIngredientText] = useState('');
   const [scanStatus, setScanStatus] = useState<ScanStatus>('idle');
   const [scanResults, setScanResults] = useState<any>(null);
+  const navigate = useNavigate();
 
-  const handleScan = (e: React.FormEvent) => {
+  const handleScan = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!ingredientText.trim()) return;
-    
     setScanStatus('scanning');
-    
-    // Simulate API call with timeout
-    setTimeout(() => {
-      const results = mockScan(ingredientText);
-      setScanResults(results);
-      setScanStatus('results');
-    }, 1500);
+    setScanResults(null);
+    try {
+      // Optionally get user profile
+      const userProfile = localStorage.getItem('user_profile');
+      const res = await fetch('/scan_text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ingredients: ingredientText,
+          profile: userProfile
+        })
+      });
+      const data = await res.json();
+      if (data.error) {
+        setScanStatus('idle');
+        setScanResults({ error: data.error });
+        return;
+      }
+      // Parse OpenAI response
+      let report = null;
+      try {
+        report = JSON.parse(data.openai_response);
+      } catch {
+        // Try to extract JSON object from text/code block
+        const match = data.openai_response.match(/\{[\s\S]*\}/);
+        if (match) {
+          try {
+            report = JSON.parse(match[0]);
+          } catch {
+            setScanStatus('idle');
+            setScanResults({ error: 'Failed to parse AI report.' });
+            return;
+          }
+        } else {
+          setScanStatus('idle');
+          setScanResults({ error: 'Failed to parse AI report.' });
+          return;
+        }
+      }
+      // Navigate to report page
+      navigate('/ingredient-report', { state: { report, userProfile: userProfile ? JSON.parse(userProfile) : null } });
+    } catch (err) {
+      setScanStatus('idle');
+      setScanResults({ error: 'Failed to connect to backend.' });
+    }
   };
 
   const resetScan = () => {
