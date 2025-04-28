@@ -82,8 +82,8 @@ MIT License. See `LICENSE` file.
 
 ---
 
-## Screenshots
-<!-- Add screenshots/gifs of the scan, report, and profile pages here for best results -->
+## Product Demo
+- https://www.loom.com/share/38e8063deb994bafa10f03f678249226?sid=e3a1d942-1a77-4def-8f89-31ab0a2a29cf
 
 ---
 
